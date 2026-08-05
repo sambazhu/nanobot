@@ -873,12 +873,12 @@ def append_fork_marker(session_key: str) -> None:
     )
 
 
-def write_session_messages_as_transcript(
-    target_key: str,
+def session_messages_to_transcript_rows(
+    session_key: str,
     messages: list[dict[str, Any]],
-) -> None:
-    """Write a minimal WebUI transcript from already-truncated session messages."""
-    target_chat_id = _chat_id_from_session_key(target_key)
+) -> list[dict[str, Any]]:
+    """Convert already-truncated session messages into transcript rows."""
+    target_chat_id = _chat_id_from_session_key(session_key)
     rows: list[dict[str, Any]] = []
     for msg in messages:
         if is_hidden_history_message(msg):
@@ -908,7 +908,15 @@ def write_session_messages_as_transcript(
         else:
             continue
         rows.append(row)
-    _write_transcript_lines(target_key, rows)
+    return rows
+
+
+def write_session_messages_as_transcript(
+    target_key: str,
+    messages: list[dict[str, Any]],
+) -> None:
+    """Write a minimal WebUI transcript from already-truncated session messages."""
+    _write_transcript_lines(target_key, session_messages_to_transcript_rows(target_key, messages))
 
 
 def delete_webui_transcript(session_key: str) -> bool:
