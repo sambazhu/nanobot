@@ -121,7 +121,12 @@ from nanobot.webui.skills_marketplace import (
     trending_marketplace_skills,
 )
 from nanobot.webui.thread_disk import delete_webui_thread
-from nanobot.webui.transcript import build_webui_thread_response
+from nanobot.webui.transcript import (
+    WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+    build_webui_thread_response,
+    replay_transcript_to_ui_messages,
+    session_messages_to_transcript_rows,
+)
 from nanobot.webui.workspaces import WebUIWorkspaceController
 
 _SLOW_WEBUI_HTTP_LOG_MS = 1_000
@@ -221,7 +226,8 @@ if TYPE_CHECKING:
 
 def _decode_api_key(raw_key: str) -> str | None:
     key = unquote(raw_key)
-    _api_key_re = re.compile(r"^[A-Za-z0-9_:.-]{1,128}$")
+    # [SAMBAZHU PATCH] allow @ for chat-app channel user ids (e.g. weixin ...@im.wechat)
+    _api_key_re = re.compile(r"^[A-Za-z0-9_:@.-]{1,128}$")
     if _api_key_re.match(key) is None:
         return None
     return key
@@ -705,7 +711,11 @@ class GatewayHTTPHandler:
         default_scope: WorkspaceScope | None = None
         for s in sessions:
             key = s.get("key")
-            if not (isinstance(key, str) and key.startswith("websocket:")):
+            # [SAMBAZHU PATCH] cross-channel: surface weixin: sessions too.
+            if not (
+                isinstance(key, str)
+                and key.startswith(_WEBUI_VISIBLE_SESSION_PREFIXES)
+            ):
                 continue
             row = {
                 k: v
@@ -794,6 +804,35 @@ class GatewayHTTPHandler:
             direction=direction,
             before=before,
         )
+        if data is None:
+            # [SAMBAZHU PATCH] fallback: chat-app channels (weixin etc.) have
+            # session history but no WebUI transcript (the conversation happens
+            # in the chat app, not the browser), so build_webui_thread_response
+            # returns None. Convert the session messages into transcript rows
+            # and replay them through the same UI-message pipeline so the
+            # history is still viewable in the WebUI.
+            fallback_rows = session_messages_to_transcript_rows(
+                decoded_key, load_session_messages() or []
+            )
+            if fallback_rows:
+                data = {
+                    "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+                    "sessionKey": decoded_key,
+                    "messages": replay_transcript_to_ui_messages(
+                        fallback_rows,
+                        augment_user_media=self.media.augment_transcript_media,
+                        augment_assistant_media=self.media.augment_transcript_media,
+                        augment_assistant_text=lambda text: (
+                            self.media.rewrite_local_markdown_images(
+                                text,
+                                workspace_path=scope.project_path,
+                            )
+                        ),
+                    ),
+                    "completed_turn_ids": [],
+                    "has_pending_tool_calls": False,
+                    "active_turn_id": None,
+                }
         if data is None:
             return _http_error(404, "webui thread not found")
         data["workspace_scope"] = scope.payload()
@@ -1536,5 +1575,13 @@ def _positive_int(value: Any) -> int | None:
     return value if value > 0 else None
 
 
+# [SAMBAZHU PATCH] cross-channel session visibility in WebUI.
+# The WebUI sidebar/list originally surfaced only ``websocket:`` sessions.
+# For a single-user self-hosted setup, also surface ``weixin:`` (and any other
+# chat-app channel prefix added below) so chat history is browsable from the
+# browser. Add prefixes here to expose more channels.
+_WEBUI_VISIBLE_SESSION_PREFIXES: tuple[str, ...] = ("websocket:", "weixin:")
+
+
 def _is_websocket_channel_session_key(key: str) -> bool:
-    return key.startswith("websocket:")
+    return key.startswith(_WEBUI_VISIBLE_SESSION_PREFIXES)

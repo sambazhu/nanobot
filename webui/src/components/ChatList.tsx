@@ -981,6 +981,16 @@ export const ChatList = memo(function ChatList({
                                   </span>
                                 ) : (
                                   <span className="relative flex w-full min-w-0 items-center gap-1.5">
+                                    {/* [SAMBAZHU PATCH] channel badge for chat-app sessions (weixin etc.) */}
+                                    {s.channel && s.channel !== "websocket" ? (
+                                      <span
+                                        className="shrink-0 text-[11px] opacity-70"
+                                        title={`来自 ${s.channel}`}
+                                        aria-label={`来自 ${s.channel}`}
+                                      >
+                                        💬
+                                      </span>
+                                    ) : null}
                                     <span className="min-w-0 flex-1 truncate font-medium leading-5">
                                       {title}
                                     </span>

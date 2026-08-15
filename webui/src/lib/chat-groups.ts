@@ -247,7 +247,12 @@ function groupSessionsByProject(
     }
     const scope = session.workspaceScope;
     const path = scope?.project_path || "";
-    if (!path || sameWorkspacePath(path, options.defaultWorkspacePath)) {
+    // [SAMBAZHU PATCH] chat-app channels (weixin/telegram/...) always show in
+    // the main "Chats" list regardless of workspace_scope, so they're reachable
+    // from any workspace in the WebUI. WebUI-native websocket sessions keep
+    // their original workspace-based grouping.
+    const isChatAppChannel = session.channel != null && session.channel !== "websocket";
+    if (isChatAppChannel || !path || sameWorkspacePath(path, options.defaultWorkspacePath)) {
       conversations.push(session);
       continue;
     }
