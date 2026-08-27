@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import ipaddress
 import json
 import socket
@@ -542,11 +543,20 @@ class WebSocketChannel(BaseChannel):
         """Return whether every bound socket still has a live listen capability."""
         try:
             sockets = server.sockets
-            return bool(sockets) and server.is_serving() and all(
-                sock.fileno() >= 0
-                and bool(sock.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN))
-                for sock in sockets
-            )
+            if not sockets or not server.is_serving():
+                return False
+            for sock in sockets:
+                if sock.fileno() < 0:
+                    return False
+                # [SAMBAZHU PATCH] macOS cannot read SO_ACCEPTCONN via getsockopt
+                # (raises ENOPROTOOPT); trust is_serving() on such platforms.
+                try:
+                    if not sock.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN):
+                        return False
+                except OSError as exc:
+                    if exc.errno != errno.ENOPROTOOPT:
+                        raise
+            return True
         except OSError:
             return False
 
