@@ -308,11 +308,10 @@ async def test_chat_parses_content_usage_and_tool_calls() -> None:
     assert response.has_tool_calls
     assert response.tool_calls[0].name == "get_weather"
     assert response.tool_calls[0].arguments == {"city": "Beijing"}
-    assert response.usage == {
-        "prompt_tokens": 12,
-        "completion_tokens": 8,
-        "total_tokens": 20,
-    }
+    assert response.usage is not None
+    assert response.usage.input_tokens == 12
+    assert response.usage.output_tokens == 8
+    assert response.usage.total_tokens == 20
     # tools must ride in `parameters`, not `input`
     body = fake.post_calls[0]["json"]
     assert body["parameters"]["tools"][0]["function"]["name"] == "get_weather"
@@ -428,12 +427,43 @@ async def test_chat_stream_content_and_reasoning_deltas() -> None:
     assert response.content == "Hello"
     assert response.reasoning_content == "th"
     assert response.finish_reason == "stop"
-    assert response.usage["prompt_tokens"] == 7
+    assert response.usage is not None
+    assert response.usage.input_tokens == 7
 
     stream_call = fake.stream_calls[0]
     assert stream_call["path"] == "/api/v1/services/aigc/multimodal-generation/generation"
     assert stream_call["headers"]["X-DashScope-SSE"] == "enable"
     assert stream_call["json"]["parameters"]["incremental_output"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_with_retry_reports_usage_object() -> None:
+    # Regression: the base-class call observer reads usage attributes
+    # (``usage.total_tokens``), so a plain dict crashes the turn after a
+    # successful model response. The usage must surface as an LLMUsage object.
+    lines = [
+        _sse({"output": {"choices": [{
+            "finish_reason": "null",
+            "message": {"content": "你好"},
+        }]}}),
+        _sse({"output": {
+            "choices": [{"finish_reason": "stop", "message": {}}],
+            "usage": {"input_tokens": 6, "output_tokens": 4, "total_tokens": 10},
+        }}),
+    ]
+    fake = FakeClient(stream_response=FakeStreamResponse(200, lines))
+    provider = DashScopeProvider(api_key="sk-test", client=fake)
+
+    response = await provider.chat_stream_with_retry(
+        [{"role": "user", "content": "hi"}],
+    )
+
+    assert response.finish_reason == "stop"
+    assert response.content == "你好"
+    assert response.usage is not None
+    assert response.usage.input_tokens == 6
+    assert response.usage.output_tokens == 4
+    assert response.usage.total_tokens == 10
 
 
 @pytest.mark.asyncio
@@ -534,4 +564,5 @@ async def test_chat_stream_array_content_parts() -> None:
     assert content_deltas == ["你好呀"]
     assert response.content == "你好呀"
     assert response.finish_reason == "stop"
-    assert response.usage["prompt_tokens"] == 5
+    assert response.usage is not None
+    assert response.usage.input_tokens == 5

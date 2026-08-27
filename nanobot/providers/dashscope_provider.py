@@ -35,6 +35,7 @@ import httpx
 from nanobot.providers.base import (
     LLMProvider,
     LLMResponse,
+    LLMUsage,
     ToolCallRequest,
     parse_tool_arguments,
     resolve_stream_idle_timeout_s,
@@ -212,25 +213,27 @@ class DashScopeProvider(LLMProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _usage(usage: object) -> dict[str, int]:
+    def _usage(usage: object) -> LLMUsage | None:
         if not isinstance(usage, dict):
-            return {}
+            return None
         data = cast(dict[str, Any], usage)
-        result: dict[str, int] = {}
-        for source, target in (
-            ("input_tokens", "prompt_tokens"),
-            ("output_tokens", "completion_tokens"),
-            ("total_tokens", "total_tokens"),
-        ):
-            value = data.get(source)
-            if isinstance(value, int):
-                result[target] = value
+        input_tokens = data.get("input_tokens")
+        output_tokens = data.get("output_tokens")
+        if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
+            return None
+        total_tokens = data.get("total_tokens")
+        cache_read_tokens: int | None = None
         details = data.get("prompt_tokens_details")
         if isinstance(details, dict):
             cached = cast(dict[str, Any], details).get("cached_tokens")
             if isinstance(cached, int):
-                result["cached_tokens"] = cached
-        return result
+                cache_read_tokens = cached
+        return LLMUsage.reported(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens if isinstance(total_tokens, int) else None,
+            cache_read_tokens=cache_read_tokens,
+        )
 
     @staticmethod
     def _finish_reason(value: Any) -> str:
@@ -380,7 +383,7 @@ class DashScopeProvider(LLMProvider):
         """
         output = cast(dict[str, Any], chunk.get("output") or {})
         usage = cls._usage(output.get("usage"))
-        if usage:
+        if usage is not None:
             state["usage"] = usage
         choices = output.get("choices")
         if not isinstance(choices, list) or not choices:
@@ -480,7 +483,7 @@ class DashScopeProvider(LLMProvider):
             content="".join(content_parts) or None,
             tool_calls=tool_calls,
             finish_reason=str(state.get("finish_reason") or "stop"),
-            usage=cast(dict[str, int], state.get("usage") or {}),
+            usage=cast(LLMUsage | None, state.get("usage")),
             reasoning_content="".join(reasoning_parts) or None,
         )
 
