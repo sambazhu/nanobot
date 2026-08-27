@@ -124,6 +124,7 @@ class FallbackProvider(LLMProvider):
         provider_factory: Callable[[Any], LLMProvider],
         fallback_model_observer: FallbackModelObserver | None = None,
         primary_context_window_tokens: int | None = None,
+        primary_supports_images: bool | None = None,
     ):
         primary_generation = primary.generation
         self._primary = primary
@@ -133,6 +134,11 @@ class FallbackProvider(LLMProvider):
         self._provider_factory = provider_factory
         self._fallback_model_observer = fallback_model_observer
         self._primary_context_window_tokens = primary_context_window_tokens
+        # [SAMBAZHU PATCH] image-aware routing: when the primary preset is
+        # explicitly marked image-incapable (supports_images=false), turns
+        # whose request payload contains images skip the primary and go
+        # straight to the fallback chain (e.g. a multimodal preset).
+        self._image_routing_enabled = primary_supports_images is False and bool(fallback_presets)
         self._has_fallbacks = bool(fallback_presets)
         self._primary_failures = 0
         self._primary_tripped_at: float | None = None
@@ -193,6 +199,15 @@ class FallbackProvider(LLMProvider):
             # Half-open: allow one probe attempt.
             return True
         return False
+
+    def _should_route_image_turn(self, kwargs: dict[str, Any]) -> bool:
+        """Return whether this request carries images the primary cannot see."""
+        if not self._image_routing_enabled:
+            return False
+        messages = kwargs.get("messages")
+        if not isinstance(messages, list):
+            return False
+        return LLMProvider._contains_image_content(messages)
 
     async def chat(self, **kwargs: Any) -> LLMResponse:
         if not self._has_fallbacks:
@@ -426,7 +441,8 @@ class FallbackProvider(LLMProvider):
         # continuation, so the incoming primary state remains reusable.
         preserve_primary_state = True
 
-        if self._primary_available():
+        route_images_to_fallback = self._should_route_image_turn(kwargs)
+        if self._primary_available() and not route_images_to_fallback:
             primary_was_attempted = True
             response = await call(self._primary, kwargs)
             if response.finish_reason != "error":
@@ -471,7 +487,14 @@ class FallbackProvider(LLMProvider):
                     primary_model, self._primary_failures,
                 )
         else:
-            logger.debug("Primary model '{}' circuit open; skipping", primary_model)
+            if route_images_to_fallback:
+                logger.info(
+                    "Primary model '{}' has no image support; routing image turn "
+                    "directly to fallback models",
+                    primary_model,
+                )
+            else:
+                logger.debug("Primary model '{}' circuit open; skipping", primary_model)
 
         last_response = primary_response
         primary_skipped = not primary_was_attempted
@@ -494,7 +517,7 @@ class FallbackProvider(LLMProvider):
                     break
             if idx == 0 and primary_skipped:
                 logger.info(
-                    "Primary model '{}' circuit open, trying fallback '{}'",
+                    "Primary model '{}' skipped, trying fallback '{}'",
                     primary_model, fallback_model,
                 )
             elif idx == 0:

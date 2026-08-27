@@ -103,6 +103,7 @@ class ModelPresetConfig(Base):
     context_window_tokens: int = 200_000
     temperature: float = 0.1
     reasoning_effort: str | None = None
+    supports_images: bool | None = Field(default=None)  # None = unknown, treated as image-capable
 
     def to_generation_settings(self) -> Any:
         from nanobot.providers.base import GenerationSettings
