@@ -71,8 +71,9 @@ class DashScopeProvider(LLMProvider):
         extra_body: dict[str, Any] | None = None,
         proxy: str | None = None,
         client: Any | None = None,
+        provider_name: str = "dashscope_native",
     ):
-        super().__init__(api_key, api_base)
+        super().__init__(api_key, api_base, provider_name=provider_name)
         self.default_model = default_model
         self._extra_headers = dict(extra_headers or {})
         self._extra_body = dict(extra_body or {})

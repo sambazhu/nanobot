@@ -1656,7 +1656,7 @@ def _positive_int(value: Any) -> int | None:
 
 
 # [SAMBAZHU PATCH] cross-channel session visibility in WebUI.
-# Upstream's is_webui_session_key() owns the ``websocket:`` namespace; for a
+# Upstream's is_webui_session_key() owns the WebUI storage namespace; for a
 # single-user self-hosted setup we additionally surface ``weixin:`` so chat
 # history is browsable from the browser. Add more chat-app channel prefixes
 # below to expose more channels.

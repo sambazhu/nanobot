@@ -234,6 +234,7 @@ def _make_provider_core(
             extra_headers=_provider_extra_headers(spec, p),
             extra_body=p.extra_body if p else None,
             proxy=p.proxy if p else None,
+            provider_name=provider_name,
         )
     else:
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
