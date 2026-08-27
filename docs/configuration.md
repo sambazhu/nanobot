@@ -1405,21 +1405,6 @@ Existing configs do not need to change. Direct `agents.defaults.model`, `provide
 {
   "modelPresets": {
     "fast": {
-      "provider": "openrouter",
-      "model": "anthropic/claude-sonnet-4.5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "fast",
-      "fallbackModels": ["deep", "localSmall"]
-    }
-  },
-  "modelPresets": {
-    "fast": {
-      "label": "Fast",
       "model": "gpt-4.1-mini",
       "provider": "openai",
       "maxTokens": 4096,
@@ -1428,7 +1413,6 @@ Existing configs do not need to change. Direct `agents.defaults.model`, `provide
       "reasoningEffort": "low"
     },
     "deep": {
-      "label": "Deep",
       "model": "claude-opus-4-5",
       "provider": "anthropic",
       "maxTokens": 8192,
@@ -1436,22 +1420,28 @@ Existing configs do not need to change. Direct `agents.defaults.model`, `provide
       "reasoningEffort": "high"
     },
     "localSmall": {
-      "label": "Local Small",
       "model": "llama3.2",
       "provider": "ollama",
       "maxTokens": 4096,
       "contextWindowTokens": 32768,
       "temperature": 0.2
     }
+  },
+  "agents": {
+    "defaults": {
+      "modelPreset": "fast",
+      "fallbackModels": ["deep", "localSmall"]
+    }
   }
 }
 ```
 
-`modelPresets` is a top-level object. The keys under it (`fast`, `deep`, `coding`, etc.) are user-defined preset names. Each preset supports:
+`modelPresets` is a top-level object. Each key (`fast`, `deep`, `coding`, etc.) is the preset's one canonical name: it is shown in the interface, passed to `/model <name>`, and referenced by defaults, fallbacks, sessions, and Dream. New and renamed presets must be unique ignoring case. Existing keys accepted by earlier releases remain loadable so upgrades do not break startup. Each preset supports:
+
+Older configs may still contain a `label` inside a preset. It is accepted when loading for compatibility but ignored; the object key remains the canonical name.
 
 | Field | Description |
 |-------|-------------|
-| `label` | Optional display name shown in model lists. |
 | `model` | Model name to use for this preset. |
 | `provider` | Provider name, or `"auto"` to use provider auto-detection. |
 | `maxTokens` | Maximum completion/output tokens. |
@@ -2093,6 +2083,7 @@ For API keys, tokens, and other secrets, see [Environment Variables for Secrets]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `tools.restrictToWorkspace` | `false` | When `true`, enables nanobot's application-level workspace guards for workspace-aware tools. File tools resolve paths under the active workspace; selected internal roots can be added as read-only or explicitly write-enabled roots, and media uploads are read-only by default. Shell execution rejects workspace-external `working_dir` values and applies best-effort command path checks, but this is not an OS sandbox. |
+| `tools.maxSessionMessagesPerMinute` | `6` | Maximum messages one source session may send during any rolling 60-second window. Additional sends are rejected to stop runaway agent loops. |
 | `tools.exec.sandbox` | `""` | Sandbox backend for shell commands. Set to `"bwrap"` to wrap exec calls in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox — the process can only see the workspace (read-write) and media directory (read-only); config files and API keys are hidden. Automatically enables workspace restriction for file tools. **Linux only** — requires `bwrap` installed (`apt install bubblewrap`; pre-installed in the Docker image). Not available on macOS or Windows (bwrap depends on Linux kernel namespaces). |
 | `tools.exec.enable` | `true` | When `false`, the shell `exec` tool is not registered at all. Use this to completely disable shell command execution. |
 | `tools.exec.timeout` | `60` | Default hard timeout in seconds for shell commands. Config values may exceed the per-call tool cap; set `0` to disable the hard timeout for trusted long-running commands. |
@@ -2235,22 +2226,11 @@ By default, nanobot only allows one spawned subagent at a time. When the limit i
 }
 ```
 
-Subagents also stop immediately when one of their tools returns an execution error. That default keeps failures visible to the parent agent. If your subagent workflows use tools that can fail transiently and should be retried or worked around by the model, disable hard-stop behavior:
-
-```json
-{
-  "agents": {
-    "defaults": {
-      "failOnToolError": false
-    }
-  }
-}
-```
+The deprecated `agents.defaults.failOnToolError` field is silently ignored when present in older configs.
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `agents.defaults.maxConcurrentSubagents` | `1` | Maximum number of spawned subagents that may run at the same time. Attempts to spawn beyond this limit return an error. |
-| `agents.defaults.failOnToolError` | `true` | Stop a spawned subagent when a tool execution fails. Set to `false` to return tool errors to the subagent model so it can recover within the same run. |
 
 
 ## Auto Compact

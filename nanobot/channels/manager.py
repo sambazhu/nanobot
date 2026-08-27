@@ -95,6 +95,7 @@ class ChannelManager:
         cron_service: CronService | None = None,
         local_trigger_store: LocalTriggerStore | None = None,
         webui_runtime_model_name: Callable[[], str | None] | None = None,
+        webui_refresh_runtime_config: Callable[[], None] | None = None,
         webui_cron_pending_job_ids: Callable[[str], set[str]] | None = None,
         webui_local_trigger_pending_ids: Callable[[str], set[str]] | None = None,
         webui_static_dist: bool = True,
@@ -103,6 +104,9 @@ class ChannelManager:
         webui_mcp_runtime_status: Callable[[], Mapping[str, str]] | None = None,
         webui_mcp_reload: Callable[[], Awaitable[dict[str, Any]]] | None = None,
         webui_skill_state_action: Callable[[set[str]], None] | None = None,
+        webui_recovery_action: (
+            Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None
+        ) = None,
         config_path: Path | None = None,
     ):
         if config_path is None:
@@ -116,6 +120,7 @@ class ChannelManager:
         self._cron_service = cron_service
         self._local_trigger_store = local_trigger_store
         self._webui_runtime_model_name = webui_runtime_model_name
+        self._webui_refresh_runtime_config = webui_refresh_runtime_config
         self._webui_cron_pending_job_ids = webui_cron_pending_job_ids
         self._webui_local_trigger_pending_ids = webui_local_trigger_pending_ids
         self._webui_static_dist = webui_static_dist
@@ -124,6 +129,7 @@ class ChannelManager:
         self._webui_mcp_runtime_status = webui_mcp_runtime_status
         self._webui_mcp_reload = webui_mcp_reload
         self._webui_skill_state_action = webui_skill_state_action
+        self._webui_recovery_action = webui_recovery_action
         self.channels: dict[str, BaseChannel] = {}
         self._channel_owners: dict[str, str] = {}
         self._channel_runtime_specs: dict[str, tuple[str, str]] = {}
@@ -183,6 +189,7 @@ class ChannelManager:
                 config_path=self._config_path,
                 disabled_skills=set(self.config.agents.defaults.disabled_skills),
                 runtime_model_name=self._webui_runtime_model_name,
+                refresh_runtime_config=self._webui_refresh_runtime_config,
                 runtime_surface=self._webui_runtime_surface,
                 runtime_capabilities_overrides=self._webui_runtime_capabilities,
                 cron_service=self._cron_service,
@@ -194,6 +201,7 @@ class ChannelManager:
                 mcp_runtime_status=self._webui_mcp_runtime_status,
                 mcp_reload=self._webui_mcp_reload,
                 skill_state_action=self._webui_skill_state_action,
+                recovery_action=self._webui_recovery_action,
                 logger=logger,
             )
             kwargs["gateway"] = gateway
@@ -611,6 +619,12 @@ class ChannelManager:
         target = self.channels.get(notice.channel)
         if target is None:
             logger.warning("Restart notice target channel is not enabled: {}", notice.channel)
+            return
+        if notice.channel == "websocket":
+            # Reconnect and recovery are already represented by WebSocket
+            # protocol state. A generic restart-complete notice must not
+            # masquerade as a recovery transition and overwrite a real
+            # awaiting-user checkpoint in connected clients.
             return
 
         while not target.is_running:

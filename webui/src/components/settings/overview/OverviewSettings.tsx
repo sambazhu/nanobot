@@ -58,7 +58,7 @@ export function OverviewSettings({
   const activePresetName = settings.agent.model_preset;
   const activePreset =
     activePresetName && activePresetName !== "default"
-      ? settings.model_presets.find((preset) => preset.name === activePresetName)?.label ??
+      ? settings.model_presets.find((preset) => preset.name === activePresetName)?.name ??
         activePresetName
       : null;
   const activeProvider = settings.agent.resolved_provider ?? settings.agent.provider;
@@ -419,6 +419,37 @@ export function AppearanceSettings({
               onChange={(brandLogos) => onChangeLocalPrefs((prev) => ({ ...prev, brandLogos }))}
               ariaLabel={tx("settings.rows.brandLogos", "Brand logos")}
               label={localPrefs.brandLogos ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.rows.browserNotifications", "Task notifications")}
+            description={tx(
+              "settings.help.browserNotifications",
+              "Notify only when this page is in the background. Off by default.",
+            )}
+          >
+            <ToggleButton
+              checked={localPrefs.browserNotifications}
+              onChange={(enabled) => {
+                if (!enabled) {
+                  onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: false }));
+                  return;
+                }
+                if (typeof Notification === "undefined") return;
+                if (Notification.permission === "granted") {
+                  onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: true }));
+                  return;
+                }
+                void Notification.requestPermission().then((permission) => {
+                  if (permission === "granted") {
+                    onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: true }));
+                  }
+                });
+              }}
+              ariaLabel={tx("settings.rows.browserNotifications", "Task notifications")}
+              label={localPrefs.browserNotifications
+                ? tx("settings.values.on", "On")
+                : tx("settings.values.off", "Off")}
             />
           </SettingsRow>
         </SettingsGroup>
