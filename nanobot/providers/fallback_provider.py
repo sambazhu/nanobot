@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -59,6 +60,7 @@ _AUTHENTICATION_ERROR_TOKENS = (
     "access_denied",
     "account_deactivated",
     "organization_deactivated",
+    "not logged in",
 )
 _NON_FALLBACK_ERROR_KINDS = frozenset({
     "content_filter",
@@ -444,7 +446,14 @@ class FallbackProvider(LLMProvider):
         route_images_to_fallback = self._should_route_image_turn(kwargs)
         if self._primary_available() and not route_images_to_fallback:
             primary_was_attempted = True
-            response = await call(self._primary, kwargs)
+            response, primary_exception = await self._call_provider(
+                call, self._primary, kwargs
+            )
+            if primary_exception is not None:
+                logger.warning(
+                    "Primary model '{}' raised {} before responding",
+                    primary_model, type(primary_exception).__name__,
+                )
             if response.finish_reason != "error":
                 self._primary_failures = 0
                 self._primary_tripped_at = None
@@ -473,7 +482,7 @@ class FallbackProvider(LLMProvider):
 
             if not self._should_fallback(response):
                 logger.warning(
-                    "Primary model '{}' returned non-fallbackable error: {}",
+                    "Primary model '{}' failed with non-fallbackable error: {}",
                     primary_model,
                     (response.content or "")[:120],
                 )
@@ -567,7 +576,14 @@ class FallbackProvider(LLMProvider):
                 fallback_kwargs.pop("reasoning_effort", None)
             else:
                 fallback_kwargs["reasoning_effort"] = fallback.reasoning_effort
-            fallback_response = await call(fallback_provider, fallback_kwargs)
+            fallback_response, fallback_exception = await self._call_provider(
+                call, fallback_provider, fallback_kwargs
+            )
+            if fallback_exception is not None:
+                logger.warning(
+                    "Fallback '{}' raised {}",
+                    fallback_model, type(fallback_exception).__name__,
+                )
 
             if fallback_response.finish_reason != "error":
                 # Do not publish a model switch merely because a fallback was
@@ -615,6 +631,26 @@ class FallbackProvider(LLMProvider):
             error_retry_after_s=retry_after_s,
             error_should_retry=True,
         )
+
+    @staticmethod
+    async def _call_provider(
+        call: Callable[[LLMProvider, dict[str, Any]], Awaitable[LLMResponse]],
+        provider: LLMProvider,
+        kwargs: dict[str, Any],
+    ) -> tuple[LLMResponse, Exception | None]:
+        """Turn provider exceptions into error responses without swallowing cancellation."""
+        try:
+            return await call(provider, kwargs), None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            response = LLMProvider._error_response_from_exception(exc)
+            if response.error_kind is None and any(
+                token in (str(exc).strip() or type(exc).__name__).lower()
+                for token in _AUTHENTICATION_ERROR_TOKENS
+            ):
+                response.error_kind = "authentication"
+            return response, exc
 
     async def _notify_fallback_model(self, model: str) -> None:
         if self._fallback_model_observer is None:
