@@ -116,8 +116,14 @@ _KIMI_SERVER_MANAGED_TEMPERATURE_MODELS: frozenset[str] = frozenset({
     "kimi-k2.5",
     "kimi-k2.6",
 })
+# Local patch (deploy branch): DeepSeek renamed its 1M-context multimodal model to
+# "deepseek-flash" (MODEL VERSION DeepSeek-V4.1-Flash); the legacy "...vision-exp" name still
+# routes to it. Without this entry the model is treated as text-only and image parts get
+# flattened by _coerce_content_to_string, so vision turns silently fail. Verified against
+# api.deepseek.com/v1/chat/completions (prompt_tokens 635 with image vs 44 without).
 _DEEPSEEK_MULTIMODAL_MODELS: frozenset[str] = frozenset({
     "deepseek-v4-flash-vision-exp",
+    "deepseek-flash",
 })
 _TEXT_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 # Thinking-capable MiMo models per Xiaomi docs (see
