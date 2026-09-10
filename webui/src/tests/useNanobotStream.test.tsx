@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { useNanobotStream } from "@/hooks/useNanobotStream";
+import { ThreadVisibilityContext } from "@/hooks/useThreadVisibility";
 import { normalizeActivityTimeline } from "@/lib/activity-timeline";
 import type { StreamError } from "@/lib/nanobot-client";
 import type {
@@ -124,6 +125,9 @@ function fakeClient() {
       getRunStartedAt(chatId: string) {
         const v = runStartedAtByChatId.get(chatId);
         return v === undefined ? null : v;
+      },
+      getRunTurnId() {
+        return null;
       },
       getGoalState(chatId: string) {
         return goalStateByChatId.get(chatId);
@@ -337,6 +341,30 @@ describe("useNanobotStream", () => {
       } else {
         delete (document as Document & { visibilityState?: DocumentVisibilityState }).visibilityState;
       }
+      vi.useRealTimers();
+    }
+  });
+
+  it("buffers a hidden chat view and flushes its ordered deltas on return", () => {
+    vi.useFakeTimers();
+    const fake = fakeClient();
+    const Client = wrap(fake.client);
+    let visible = false;
+    const { result, rerender, unmount } = renderHook(() => useNanobotStream("hidden-view", EMPTY_MESSAGES), {
+      wrapper: ({ children }) => <Client><ThreadVisibilityContext.Provider value={visible}>{children}</ThreadVisibilityContext.Provider></Client>,
+    });
+    try {
+      act(() => {
+        for (let seq = 1; seq <= 100; seq++) fake.emit("hidden-view", {
+          event: "delta", chat_id: "hidden-view", text: "x", turn_id: "turn", turn_seq: seq,
+        });
+      });
+      expect(result.current.messages).toHaveLength(0);
+      visible = true;
+      rerender();
+      expect(result.current.messages[0]).toMatchObject({ content: "x".repeat(100), turnSeq: 100 });
+    } finally {
+      unmount();
       vi.useRealTimers();
     }
   });
@@ -3227,6 +3255,72 @@ describe("useNanobotStream", () => {
     expect(result.current.isStreaming).toBe(false);
   });
 
+  it("clears retry status and exposes a terminal model failure at turn end", () => {
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(120_000);
+    const fake = fakeClient();
+    const { result } = renderHook(() => useNanobotStream("chat-retry", EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => {
+      fake.emit("chat-retry", {
+        event: "retry_status",
+        chat_id: "chat-retry",
+        turn_id: "turn-1",
+        state: "waiting",
+        attempt: 2,
+        max_attempts: 4,
+        error_kind: "connection",
+        retry_after_s: 3.5,
+      });
+    });
+    expect(result.current.retryStatus).toEqual({
+      state: "waiting",
+      attempt: 2,
+      max_attempts: 4,
+      error_kind: "connection",
+      next_retry_at: 123.5,
+      turn_id: "turn-1",
+    });
+    expect(result.current.isStreaming).toBe(true);
+
+    act(() => {
+      fake.emit("chat-retry", {
+        event: "retry_status",
+        chat_id: "chat-retry",
+        turn_id: "turn-1",
+        state: "cleared",
+        attempt: 2,
+        max_attempts: 4,
+        error_kind: "connection",
+      });
+    });
+    expect(result.current.retryStatus).toBeNull();
+
+    act(() => {
+      fake.emit("chat-retry", {
+        event: "turn_end",
+        chat_id: "chat-retry",
+        turn_id: "turn-1",
+        outcome: "failed",
+        failure_kind: "model",
+        failure_error_kind: "connection",
+        failure_attempts: 4,
+        failure_message: "Unlocalized server failure",
+      });
+    });
+    expect(result.current.retryStatus).toBeNull();
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.streamError).toEqual({
+      kind: "model_request_failed",
+      chatId: "chat-retry",
+      turnId: "turn-1",
+      errorKind: "connection",
+      attempts: 4,
+    });
+    dateNow.mockRestore();
+  });
+
   it("clears runStartedAt on turn_end even without idle", () => {
     const fake = fakeClient();
     const { result } = renderHook(() => useNanobotStream("chat-g", EMPTY_MESSAGES), {
@@ -3340,18 +3434,53 @@ describe("useNanobotStream", () => {
 
 describe("live/replay projection before canonical-event revision migration", () => {
   it.each(PROJECTION_FIXTURE_CASES)("matches the shared $name fixture", (fixtureCase) => {
+    // Keep client-only elapsed-time estimates out of the transport contract.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(0);
+    try {
+      const fake = fakeClient();
+      const { result } = renderHook(
+        () => useNanobotStream(fixtureCase.chat_id, fixtureCase.initial_messages),
+        { wrapper: wrap(fake.client) },
+      );
+
+      for (const event of fixtureCase.live_events) {
+        act(() => {
+          fake.emit(fixtureCase.chat_id, event);
+        });
+      }
+
+      expect(normalizeProjection(result.current.messages)).toEqual(fixtureCase.expected);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it.each([true, false])("keeps continuation reasoning before its answer across frames (text snapshots: %s)", async (snapshots) => {
+    const fixture = PROJECTION_FIXTURE_CASES.find(
+      (candidate) => candidate.name === "length_continuation_reasoning_then_new_recovery_turn",
+    )!;
     const fake = fakeClient();
     const { result } = renderHook(
-      () => useNanobotStream(fixtureCase.chat_id, fixtureCase.initial_messages),
+      () => useNanobotStream(fixture.chat_id, fixture.initial_messages),
       { wrapper: wrap(fake.client) },
     );
-
-    for (const event of fixtureCase.live_events) {
+    for (const event of fixture.live_events) {
       act(() => {
-        fake.emit(fixtureCase.chat_id, event);
+        fake.emit(fixture.chat_id, event.event === "stream_end" && !snapshots
+          ? { ...event, text: undefined }
+          : event);
       });
+      await flushStreamFrame();
     }
-
-    expect(normalizeProjection(result.current.messages)).toEqual(fixtureCase.expected);
+    const units = normalizeActivityTimeline(result.current.messages);
+    expect(units.map((unit) => unit.type === "activity"
+      ? unit.messages.map((message) => message.reasoning).join("")
+      : unit.message.content)).toEqual([
+      "Write long code.",
+      "Plan.\n\nContinue code.\n\nFinish code.",
+      "```python\nfirst\nsecond",
+      "Recover.\n\nContinue recovery.",
+      "Recovered answer.",
+    ]);
   });
 });

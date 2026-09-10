@@ -170,6 +170,7 @@ _WEBUI_MUTATION_PATHS = {
     "settings.api_service.stop": "/api/settings/api-service/stop",
     "settings.image_generation.update": "/api/settings/image-generation/update",
     "settings.transcription.update": "/api/settings/transcription/update",
+    "settings.runtime_config.update": "/api/settings/runtime-config/update",
     "settings.network_safety.update": "/api/settings/network-safety/update",
     "settings.cli_app.install": "/api/settings/cli-apps/install",
     "settings.cli_app.update": "/api/settings/cli-apps/update",
@@ -517,6 +518,8 @@ class GatewayHTTPHandler:
         # Bootstrap
         if got == "/webui/bootstrap":
             return self._handle_bootstrap(connection, request)
+        if got == "/webui/terminal":
+            return self._handle_bootstrap(connection, request, terminal_probe=True)
 
         # Settings routes (delegated)
         response = await self.settings_routes.dispatch(connection, request, got)
@@ -607,7 +610,9 @@ class GatewayHTTPHandler:
 
     # -- Bootstrap ----------------------------------------------------------
 
-    def _handle_bootstrap(self, connection: Any, request: Any) -> Response:
+    def _handle_bootstrap(
+        self, connection: Any, request: Any, *, terminal_probe: bool = False,
+    ) -> Response:
         secret = self.config.token_issue_secret.strip() or self.config.token.strip()
         is_local_browser = _is_local_browser_request(connection, request.headers)
         is_proxy_authenticated = _is_trusted_proxy_authenticated_request(
@@ -621,6 +626,11 @@ class GatewayHTTPHandler:
                     return _http_error(401, "Unauthorized")
             elif not is_local_browser:
                 return _http_error(403, "bootstrap is localhost-only")
+
+        terminal = {"protocolVersion": 1, "gatewayId": self.tokens.instance_id}
+        if terminal_probe:
+            # Capability probing does not allocate credentials or acquire client leases.
+            return _http_json_response(terminal, extra_headers=_NO_STORE_HEADERS)
 
         if is_proxy_authenticated:
             payload = {
@@ -657,6 +667,7 @@ class GatewayHTTPHandler:
         expected_path = _normalize_config_path(self.config.path)
         payload = {
             "token": token,
+            "terminal": terminal,
             "ws_path": expected_path,
             "ws_url": ws_url,
             "expires_in": self.config.token_ttl_s,

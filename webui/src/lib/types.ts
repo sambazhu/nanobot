@@ -1,4 +1,4 @@
-import type { ContextCompaction, NotificationEvent, RecoveryState } from "../../../packages/client-events/notifications";
+import type { ContextCompaction, NotificationEvent, RecoveryState, RetryStatus as WireRetryStatus } from "../../../packages/client-events/notifications";
 export type { RecoveryState, RecoveryStatus } from "../../../packages/client-events/notifications";
 
 type Role = "user" | "assistant" | "tool" | "system";
@@ -64,6 +64,10 @@ export interface TurnUsage {
 
 export type RoundUsage = TurnUsage;
 
+export interface RetryStatus extends WireRetryStatus {
+  next_retry_at?: number;
+  turn_id?: string;
+}
 export interface UIMessage {
   id: string;
   role: Role;
@@ -567,7 +571,11 @@ export interface ProviderOAuthPending {
 export type ProviderOAuthLoginResult = SettingsPayload | ProviderOAuthAuthorizationRequired;
 export type ProviderOAuthCompletionResult = SettingsPayload | ProviderOAuthPending;
 
+export type RuntimeConfigValue = string | number | boolean | string[] | null;
+
+
 export interface SettingsPayload {
+  runtime_config?: Record<string, RuntimeConfigValue>;
   surface?: RuntimeSurface;
   runtime_surface?: RuntimeSurface;
   runtime_capabilities?: RuntimeCapabilities;
@@ -814,6 +822,12 @@ export interface SettingsPayload {
       ttft_ms: number;
       timed_requests: number;
       duration_ms: number;
+    }>;
+    model_days_30d?: Array<{
+      date: string;
+      provider: string;
+      model: string;
+      total_tokens: number;
     }>;
     updated_at?: string | null;
   };
@@ -1422,6 +1436,11 @@ export type InboundEvent =
       context_window_tokens?: number;
       /** Authoritative sustained-goal snapshot for this chat (same shape as ``goal_state`` events). */
       goal_state?: GoalStateWsPayload;
+      outcome?: "completed" | "failed" | "cancelled" | "interrupted";
+      failure_kind?: string;
+      failure_error_kind?: string;
+      failure_attempts?: number;
+      failure_message?: string;
     } & InboundTurnMetadata)
   | ({
       event: "goal_status";
