@@ -2528,3 +2528,53 @@ def build_webui_thread_response(
         payload["fork_boundary_event_index"] = fork_boundary_event_index
     payload["page"] = page
     return payload
+
+
+def build_webui_session_fallback_response(
+    session_key: str,
+    session_messages: list[dict[str, Any]],
+    *,
+    augment_user_media: Callable[[list[str]], list[dict[str, Any]]] | None = None,
+    augment_assistant_media: Callable[[list[str]], list[dict[str, Any]]] | None = None,
+    augment_assistant_text: Callable[[str], str] | None = None,
+    stats: TranscriptReplayStats | None = None,
+) -> dict[str, Any] | None:
+    """Build a canonical events payload directly from session messages.
+
+    Chat-app channel sessions (``weixin:`` etc.) accumulate session history
+    without ever writing a WebUI transcript, so ``build_webui_thread_response``
+    returns None for them. Project the session messages through the same
+    client-projection pipeline so the history stays viewable in the WebUI.
+    """
+    replay_stats = stats or TranscriptReplayStats()
+    lines = session_messages_to_transcript_rows(session_key, session_messages)
+    if not lines:
+        return None
+    lines = _ensure_replay_identities(lines)
+    replay_started = time.perf_counter()
+    events, fork_boundary_event_index = _client_projection_events(
+        lines,
+        augment_user_media=augment_user_media,
+        augment_assistant_media=augment_assistant_media,
+        augment_assistant_text=augment_assistant_text,
+    )
+    replay_stats.replay_ms += int((time.perf_counter() - replay_started) * 1000)
+    page: dict[str, Any] = {
+        "before_cursor": None,
+        "has_more_before": False,
+        "loaded_event_count": len(events),
+        "user_message_offset": 0,
+    }
+    payload: dict[str, Any] = {
+        "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+        "sessionKey": session_key,
+        "completed_turn_ids": completed_turn_ids(lines),
+        "has_pending_tool_calls": has_pending_tool_calls(lines),
+        "active_turn_id": None,
+        "projection": "events",
+        "events": events,
+        "page": page,
+    }
+    if fork_boundary_event_index is not None:
+        payload["fork_boundary_event_index"] = fork_boundary_event_index
+    return payload

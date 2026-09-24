@@ -128,12 +128,10 @@ from nanobot.webui.skills_marketplace import (
 )
 from nanobot.webui.thread_disk import delete_webui_thread
 from nanobot.webui.transcript import (
-    WEBUI_TRANSCRIPT_SCHEMA_VERSION,
     TranscriptReplayStats,
+    build_webui_session_fallback_response,
     build_webui_thread_response,
     build_webui_trace_detail_response,
-    replay_transcript_to_ui_messages,
-    session_messages_to_transcript_rows,
     webui_transcript_revision,
 )
 from nanobot.webui.workspaces import WebUIWorkspaceController
@@ -1070,31 +1068,21 @@ class GatewayHTTPHandler:
             # [SAMBAZHU PATCH] fallback: chat-app channels (weixin etc.) have
             # session history but no WebUI transcript (the conversation happens
             # in the chat app, not the browser), so build_webui_thread_response
-            # returns None. Convert the session messages into transcript rows
-            # and replay them through the same UI-message pipeline so the
-            # history is still viewable in the WebUI.
-            fallback_rows = session_messages_to_transcript_rows(
-                decoded_key, load_session_messages() or []
+            # returns None. Project the session messages through the canonical
+            # events pipeline so the history is still viewable in the WebUI.
+            data = build_webui_session_fallback_response(
+                decoded_key,
+                load_session_messages() or [],
+                augment_user_media=self.media.augment_transcript_media,
+                augment_assistant_media=self.media.augment_transcript_media,
+                augment_assistant_text=lambda text: (
+                    self.media.rewrite_local_markdown_images(
+                        text,
+                        workspace_path=scope.project_path,
+                    )
+                ),
+                stats=diagnostics.transcript if diagnostics is not None else None,
             )
-            if fallback_rows:
-                data = {
-                    "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
-                    "sessionKey": decoded_key,
-                    "messages": replay_transcript_to_ui_messages(
-                        fallback_rows,
-                        augment_user_media=self.media.augment_transcript_media,
-                        augment_assistant_media=self.media.augment_transcript_media,
-                        augment_assistant_text=lambda text: (
-                            self.media.rewrite_local_markdown_images(
-                                text,
-                                workspace_path=scope.project_path,
-                            )
-                        ),
-                    ),
-                    "completed_turn_ids": [],
-                    "has_pending_tool_calls": False,
-                    "active_turn_id": None,
-                }
         if data is None:
             return _http_error(404, "webui thread not found")
         data["workspace_scope"] = scope.payload()

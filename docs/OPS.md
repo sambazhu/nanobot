@@ -75,6 +75,7 @@ curl -s http://127.0.0.1:18790/health                    # 验证
 |---|---|
 | `/health` 不通 | `launchctl list \| grep nanobot` 看 PID 与退出码 → `tail` err 日志找 Traceback |
 | 微信不回复 | err 日志 grep `Traceback`；若是 `ModuleNotFoundError` 多为切分支未重启（见第 4 节） |
+| 测试冒烟用例失败 / 全量套件挂住，报 `SOCKS proxy` 或 `connect_socks_proxy` | 本机系统代理（Clash 等，127.0.0.1:7890）开着时，websockets 客户端连 127.0.0.1 也会走代理。跑测试加前缀 `NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost"` |
 | `nanobot gateway status` 显示 not_started | **正常现象**，该命令只认 CLI 后台实例的状态文件，launchd 部署不写它，勿被误导 |
 | 端口被占用 | 多为旧实例未退：`ps aux \| grep nanobot` 找 PID，kickstart 重启即可 |
 | 重启机器后网关没起 | 本服务为用户级 LaunchAgent，需登录桌面后才会启动；需无人值守运行改为 LaunchDaemon |
