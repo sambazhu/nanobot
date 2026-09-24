@@ -122,6 +122,7 @@ _KIMI_SERVER_MANAGED_TEMPERATURE_MODELS: frozenset[str] = frozenset({
 # flattened by _coerce_content_to_string, so vision turns silently fail. Verified against
 # api.deepseek.com/v1/chat/completions (prompt_tokens 635 with image vs 44 without).
 _DEEPSEEK_MULTIMODAL_MODELS: frozenset[str] = frozenset({
+    "deepseek-flash",
     "deepseek-v4-flash-vision-exp",
     "deepseek-flash",
 })
